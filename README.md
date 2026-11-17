@@ -25,4 +25,7 @@ Open `index.html` in any modern browser (Chrome, Edge, Firefox, Safari). WebGL m
 ## Notes on the numbers
 
 Quiet-breathing values (760/759/761 mm Hg intrapulmonary, 756/754 mm Hg intrapleural, 500 mL tidal volume) come from the lecture deck. Forced-breathing values are illustrative, apart from the −18 mm Hg intrapleural maximum. Cycle timing and the airflow trace are assumptions made for the simulation.
-# CLASS-PROJECT-RS-1
+
+## Copyright
+
+© 2026 Dr. Manjusha Shinde, AIIMS Kalyani. All rights reserved.
