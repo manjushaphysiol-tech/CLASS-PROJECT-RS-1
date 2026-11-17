@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mechanics of Breathing 3D Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a radiograph viewing box. Station list left, 3D thorax centre with live pressure HUD, teaching panel right, cycle traces along the bottom. Single dark theme by choice. */
+:root{
+  color-scheme: dark;
+  --ink:#0d1620;        /* page background */
+  --panel:#142130;      /* side panels */
+  --panel-2:#1b2c3f;    /* raised surfaces */
+  --line:#2a3e55;       /* hairlines */
+  --text:#e6edf5;
+  --muted:#93a6ba;
+  --accent:#5fd0c5;     /* navigation / interactive */
+  --insp:#6fb7ff;       /* inspiration */
+  --exp:#ffb067;        /* expiration */
+  --pleura:#b79cff;     /* intrapleural */
+  --ok:#69d38c; --bad:#ff7d7d;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ink);color:var(--text);font-family:var(--f-body);font-size:14px;line-height:1.5}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{height:100%;display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:230px minmax(0,1fr) 350px;grid-template-areas:"head head head" "nav stage info" "nav traces info"}
+header{grid-area:head;display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-family:var(--f-display);font-weight:600;font-size:20px;letter-spacing:.02em;margin:0;text-wrap:balance}
+header .by{color:var(--muted);font-size:12px}
+.controls{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:transparent;border:0;padding:6px 12px;cursor:pointer;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#06221f;font-weight:600}
+.btn{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+.btn:hover,.seg button:hover{filter:brightness(1.15)}
+.ctl{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+input[type=range]{accent-color:var(--accent);width:110px}
+
+nav{grid-area:nav;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px 10px}
+nav h2,.info h2,.traces h2{font-family:var(--f-display);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:2px 6px 8px;font-weight:600}
+.stations{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.stations button{width:100%;text-align:left;display:flex;gap:10px;align-items:center;background:transparent;border:1px solid transparent;border-radius:8px;padding:7px 8px;cursor:pointer}
+.stations button:hover{background:var(--panel-2)}
+.stations button[aria-current="true"]{background:var(--panel-2);border-color:var(--accent)}
+.num{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-family:var(--f-mono);font-size:11px;font-weight:600;background:var(--panel-2);border:1px solid var(--accent);color:var(--accent)}
+[aria-current="true"] .num{background:var(--accent);color:#06221f}
+.layers{margin-top:16px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:5px}
+.layers label{display:flex;gap:8px;align-items:center;padding:0 6px;color:var(--muted);cursor:pointer}
+.layers input{accent-color:var(--accent)}
+
+.stage{grid-area:stage;position:relative;min-height:320px;overflow:hidden;background:radial-gradient(ellipse at 50% 40%,#1a2c40 0%,#0d1620 70%)}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+.stage canvas:active{cursor:grabbing}
+.pins{position:absolute;inset:0;pointer-events:none}
+.pin{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:pointer;display:flex;align-items:center;gap:6px;background:none;border:0;padding:0}
+.pin .num{box-shadow:0 0 0 3px rgba(13,22,32,.7)}
+.pin span.lbl{font-size:11px;background:rgba(13,22,32,.78);padding:1px 6px;border-radius:4px;white-space:nowrap;color:var(--text)}
+.pin.on .num{background:var(--accent);color:#06221f}
+.hud{position:absolute;left:12px;top:12px;z-index:2;background:rgba(13,22,32,.94);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:215px;max-width:60%}
+.phase{font-family:var(--f-display);font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px}
+.phase i{width:10px;height:10px;border-radius:50%;background:var(--insp);display:inline-block}
+.phase.exp i{background:var(--exp)}
+.rd{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;margin-top:6px;font-size:12px;align-items:baseline}
+.rd dt{color:var(--muted)} .rd dd{margin:0;font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right}
+.rd .u{color:var(--muted);font-size:11px;text-align:left}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.chip{font-size:11px;border:1px solid var(--line);border-radius:20px;padding:1px 8px;color:var(--muted)}
+.chip.on{border-color:#ff8a70;color:#ffd0c4;background:rgba(255,110,80,.18)}
+.flowtag{position:absolute;right:12px;top:12px;font-family:var(--f-display);font-size:14px;background:rgba(13,22,32,.82);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.hint{position:absolute;right:12px;bottom:10px;color:var(--muted);font-size:11px;background:rgba(13,22,32,.6);padding:2px 8px;border-radius:6px}
+
+.traces{grid-area:traces;border-top:1px solid var(--line);background:var(--panel);padding:8px 14px 10px}
+.traces .row{display:flex;align-items:center;gap:12px}
+.traces h2{margin:0}
+.traces input[type=range]{flex:1;width:auto}
+#trace{width:100%;height:150px;display:block;margin-top:6px}
+
+.info{grid-area:info;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;background:transparent;border:0;border-bottom:2px solid transparent;padding:10px 6px;cursor:pointer;color:var(--muted);font-family:var(--f-display);letter-spacing:.06em;text-transform:uppercase;font-size:12px}
+.tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.pane{overflow:auto;padding:14px 16px 20px;flex:1}
+.pane h3{font-family:var(--f-display);font-size:20px;margin:0 0 4px;font-weight:600;text-wrap:balance}
+.pane h4{font-family:var(--f-display);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin:14px 0 4px}
+.pane p{margin:6px 0;max-width:62ch}
+.pane ul{margin:4px 0;padding-left:18px}
+.pane li{margin:3px 0}
+.watch{border-left:3px solid var(--accent);background:var(--panel-2);padding:8px 10px;border-radius:0 8px 8px 0;margin-top:12px;font-size:13px}
+.applied{border-left:3px solid var(--exp);background:var(--panel-2);padding:8px 10px;border-radius:0 8px 8px 0;margin-top:10px;font-size:13px}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.navrow{display:flex;justify-content:space-between;gap:8px;margin-top:16px}
+.seq{list-style:none;padding:0;margin:6px 0 0;display:flex;flex-direction:column;gap:4px}
+.seq li{border:1px solid var(--line);border-radius:8px;padding:6px 10px;color:var(--muted);position:relative;margin:0}
+.seq li.done{color:var(--text)}
+.seq.i li.now{border-color:var(--insp);background:rgba(111,183,255,.16);color:var(--text)}
+.seq.e li.now{border-color:var(--exp);background:rgba(255,176,103,.16);color:var(--text)}
+.q{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.q p{margin:0 0 8px;font-weight:500}
+.q button{display:block;width:100%;text-align:left;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-top:5px;cursor:pointer}
+.q button.right{border-color:var(--ok);background:rgba(105,211,140,.16)}
+.q button.wrong{border-color:var(--bad);background:rgba(255,125,125,.14)}
+.q .why{margin-top:8px;color:var(--muted);font-size:13px;display:none}
+.q.answered .why{display:block}
+.boyle{background:var(--panel-2);border-radius:10px;padding:10px 12px;margin-top:10px}
+.boyle .bar{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:4px 0 8px}
+.boyle .bar b{display:block;height:100%;background:var(--insp)}
+.boyle .bar.p b{background:var(--exp)}
+.boyle input{width:100%}
+.err{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:var(--muted)}
+
+@media (max-width:1000px){
+  html,body{height:auto}
+  .app{height:auto;grid-template-columns:minmax(0,1fr);grid-template-rows:auto;grid-template-areas:"head" "stage" "traces" "nav" "info"}
+  .stage{height:62vh;min-height:380px}
+  nav{border-right:0;border-top:1px solid var(--line)}
+  .stations{flex-direction:row;flex-wrap:wrap}
+  .stations li{flex:1 1 150px}
+  .layers{flex-direction:row;flex-wrap:wrap}
+  .info{border-left:0;border-top:1px solid var(--line)}
+  .controls{margin-left:0}
+  .hud{min-width:0;font-size:12px}
+  .pin span.lbl{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>Mechanics of Breathing: 3D Navigation Map</h1>
+      <div class="by">Built from the lecture deck of Dr. Manjusha Shinde, AIIMS Kalyani</div>
+    </div>
+    <div class="controls">
+      <button class="btn" id="play" type="button">Pause</button>
+      <div class="seg" role="group" aria-label="Breathing mode">
+        <button type="button" id="mQuiet" aria-pressed="true">Quiet breathing</button>
+        <button type="button" id="mForced" aria-pressed="false">Forced breathing</button>
+      </div>
+      <label class="ctl" for="speed">Speed <input id="speed" type="range" min="0.25" max="2" step="0.25" value="1"></label>
+      <button class="btn" id="reset" type="button">Reset view</button>
+    </div>
+  </header>
+
+  <nav aria-label="Stations">
+    <h2>Navigation map</h2>
+    <ul class="stations" id="stations"></ul>
+    <div class="layers">
+      <h2>Layers</h2>
+      <label><input type="checkbox" id="lyRibs" checked> Rib cage</label>
+      <label><input type="checkbox" id="lyLungs" checked> Lungs</label>
+      <label><input type="checkbox" id="lyPleura" checked> Pleural sac</label>
+      <label><input type="checkbox" id="lyMus" checked> Accessory muscles</label>
+      <label><input type="checkbox" id="lyPins" checked> Station pins</label>
+    </div>
+  </nav>
+
+  <section class="stage" id="stage" aria-label="3D model of the thorax">
+    <canvas id="gl"></canvas>
+    <div class="pins" id="pins"></div>
+    <div class="hud" aria-live="off">
+      <div class="phase" id="phase"><i></i><span>Inspiration</span></div>
+      <dl class="rd">
+        <dt>Atmospheric</dt><dd>760.0</dd><span class="u">mm Hg</span>
+        <dt>Intrapulmonary</dt><dd id="rPalv">760.0</dd><span class="u">mm Hg</span>
+        <dt>Intrapleural</dt><dd id="rPip">756.0</dd><span class="u">mm Hg</span>
+        <dt>Transpulmonary</dt><dd id="rPtp">+4.0</dd><span class="u">mm Hg</span>
+        <dt>Volume above FRC</dt><dd id="rVol">0</dd><span class="u">mL</span>
+      </dl>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div class="flowtag" id="flowtag">Air flows in</div>
+    <div class="hint">Drag to rotate · scroll or pinch to zoom · click a pin</div>
+  </section>
+
+  <section class="traces" aria-label="Respiratory cycle traces">
+    <div class="row">
+      <h2>One respiratory cycle</h2>
+      <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Scrub through the cycle">
+    </div>
+    <canvas id="trace"></canvas>
+  </section>
+
+  <aside class="info">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tabS" aria-selected="true" type="button">Station</button>
+      <button role="tab" id="tabQ" aria-selected="false" type="button">Sequence</button>
+      <button role="tab" id="tabT" aria-selected="false" type="button">Self-check</button>
+    </div>
+    <div class="pane" id="paneS"></div>
+    <div class="pane" id="paneQ" hidden>
+      <h3>Sequence of events</h3>
+      <p>The steps light up as the simulation runs.</p>
+      <h4 style="color:var(--insp)">Inspiration</h4>
+      <ol class="seq i" id="seqI"></ol>
+      <h4 style="color:var(--exp)">Expiration</h4>
+      <ol class="seq e" id="seqE"></ol>
+    </div>
+    <div class="pane" id="paneT" hidden></div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+var $=function(id){return document.getElementById(id)};
+
+/* ---------- Breathing model (values from the deck; forced swings are illustrative) ---------- */
+var MODES={
+  quiet:{Ti:2.0,Te:3.0,VT:500,A:1,dPip:2,geo:1},
+  forced:{Ti:1.6,Te:1.9,VT:2500,A:3,dPip:14,geo:2.3}
+};
+var S={mode:'quiet',playing:true,phase:0,speed:1,station:0};
+function model(p,mode){
+  var m=MODES[mode],T=m.Ti+m.Te,fi=m.Ti/T,insp=p<fi,x,vf,s;
+  if(insp){x=p/fi;vf=(1-Math.cos(Math.PI*x))/2;s=Math.sin(Math.PI*x)}
+  else{x=(p-fi)/(1-fi);vf=(1+Math.cos(Math.PI*x))/2;s=-Math.sin(Math.PI*x)}
+  var Palv=760-m.A*s;
+  var Pip=756-m.dPip*vf-0.5*s*(m.A);
+  var flow=s*m.VT*Math.PI/(2*(insp?m.Ti:m.Te))/1000; /* L/s */
+  return {insp:insp,x:x,vf:vf,s:s,Palv:Palv,Pip:Pip,Ptp:Palv-Pip,vol:vf*m.VT,flow:flow,e:vf*m.geo,T:T,fi:fi};
+}
+
+/* ---------- Stations (content from the deck) ---------- */
+var ST=[
+ {t:'Overview',pin:null,cam:[0.5,1.4,10.4,[0,0.1,0.85]],
+  h:'<p>Breathing is an automatic, rhythmic and centrally regulated mechanical process. Contraction and relaxation of the skeletal muscles of the diaphragm, abdomen and rib cage move gas into and out of the terminal respiratory units of the lung.</p>'+
+    '<h4>Basic principles of pulmonary ventilation</h4><ul><li>Lungs do not move independently. Movement of specific muscles is required.</li><li>Muscles of the chest change the volume of the thoracic cavity, and with it lung volume.</li><li>A change in volume causes a change in pressure.</li><li>Air flows from higher pressure to lower pressure.</li></ul>'+
+    '<h4>Respiration</h4><p>Oxygen from the atmosphere is delivered to the tissues and carbon dioxide is removed. It covers internal (cellular) respiration and external respiration, or breathing.</p>'+
+    '<div class="watch">Follow the numbered pins in order, or press a station on the left. The model keeps breathing while you explore.</div>'},
+ {t:'Airways',pin:[0,1.8,0.8],cam:[0.25,1.2,6.0,[0,1.1,0.8]],
+  h:'<h4>Weibel classification</h4><ul><li>Conducting zone: the first 16 generations. This is the anatomical dead space, about 150 mL.</li><li>Major site of resistance: medium-sized bronchi, up to the 7th generation.</li><li>Cilia are present up to the respiratory bronchioles.</li></ul>'+
+    '<h4>Airway resistance</h4><p>Resistance offered to airflow by the airways. The larger airways offer the most resistance, the smaller ones less.</p><p>Factors: airway diameter, lung volume, bronchial smooth muscle tone, viscosity and density of the inspired gas, and the phase of respiration.</p>'+
+    '<div class="applied"><b>Applied.</b> Absent dynein gives immotile cilia syndrome. Kartagener syndrome is the triad of situs inversus, bronchiectasis and chronic sinusitis.</div>'+
+    '<div class="watch">Watch the particles in the trachea. Blue moves in during inspiration, amber moves out during expiration, and both are fastest in mid-phase.</div>'},
+ {t:'Diaphragm',pin:[0,-0.7,1.45],cam:[0.5,1.75,7.0,[0,-0.5,0.85]],
+  h:'<p>The diaphragm separates the thoracic cavity from the abdomen. It is a primary muscle of inspiration.</p><ul><li>Quiet inhalation is active: the diaphragm and external intercostals contract.</li><li>Contraction flattens the dome and pulls it down, which lengthens the thoracic cavity.</li><li>Quiet exhalation is passive: the muscle relaxes and the dome rises again.</li></ul>'+
+    '<div class="applied"><b>Applied.</b> What happens in diaphragmatic paralysis? What happens with assisted ventilation?</div>'+
+    '<div class="watch">The dome glows while it contracts. Switch to forced breathing to see a much larger descent.</div>'},
+ {t:'Rib cage and external intercostals',pin:[1.52,0.15,1.0],cam:[1.25,1.4,8.1,[0,0.2,0.8]],
+  h:'<p>The rib cage is hinged between the vertebral column and the sternum, so it can be raised and lowered. The external intercostals are rib elevators and primary muscles of inspiration.</p><h4>Two movements</h4><ul><li><b>Pump handle effect.</b> The front ends of the ribs and the sternum swing up and forward. Antero-posterior diameter increases.</li><li><b>Bucket handle effect.</b> The lateral shafts of the ribs lift outward. Transverse diameter increases.</li></ul>'+
+    '<div class="applied"><b>Applied.</b> Traumatic chest with flail chest: what is happening to the chest wall during each phase?</div>'+
+    '<div class="watch">View from the side for the pump handle, from the front for the bucket handle. Forced breathing exaggerates both.</div>'},
+ {t:'Accessory muscles',pin:[0.4,2.1,0.55],cam:[0.7,1.25,8.3,[0,0.6,0.7]],
+  h:'<p>Accessory respiratory muscles are activated when respiration increases significantly.</p><ul><li><b>Forced inhalation (active):</b> diaphragm, external intercostals and accessory inspiratory muscles of the neck, shown here as sternocleidomastoid and scalenes.</li><li><b>Forced exhalation (active):</b> accessory expiratory muscles, shown here as the abdominal wall, working with the internal intercostals as rib depressors.</li></ul>'+
+    '<div class="applied"><b>Applied.</b> Strength of the expiratory muscles matters in endurance training such as running.</div>'+
+    '<div class="watch">Choose Forced breathing. Neck muscles light up in inspiration and the abdominal wall lights up in expiration. In quiet breathing they stay silent.</div>'},
+ {t:'Pleural sac and intrapleural pressure',pin:[-1.4,0.8,0.9],cam:[-0.6,1.35,7.3,[-0.4,0.3,0.85]],
+  h:'<ul><li>Parietal pleura is attached to the thoracic cavity and secretes fluid.</li><li>Visceral pleura is attached to the lung and resorbs fluid.</li><li>The pressure in the pleural space is negative. Lung elastic fibres recoil inward against it.</li><li>Together these keep the lung inflated and let it glide.</li></ul>'+
+    '<h4>Intrapleural pressure</h4><ul><li>756 mm Hg at the end of expiration, 754 mm Hg at the end of quiet inspiration.</li><li>About −5 cm H₂O in expiration and −8 cm H₂O in inspiration.</li><li>Averages −4 mm Hg, maximum −18 mm Hg.</li><li>Stays below atmospheric pressure through the whole cycle.</li></ul><p>Significance: it decides the change in volume and facilitates inspiration. It varies with posture and gravity.</p>'+
+    '<div class="applied"><b>Applied.</b> Pleural effusion reduces the ability to develop negative alveolar pressure. Pneumothorax and dehydration also disturb the sac.</div>'+
+    '<div class="watch">The violet shell is the pleural sac, drawn wider than life. Follow the Intrapleural readout and the violet trace.</div>'},
+ {t:'Alveoli and intrapulmonary pressure',pin:[-1.1,-0.25,1.3],cam:[-0.95,1.5,5.5,[-0.7,-0.1,0.9]],
+  h:'<p>Intrapulmonary pressure is also called intra-alveolar pressure and is read relative to atmospheric pressure.</p><ul><li>No airflow: 760 mm Hg, equal to atmospheric.</li><li>Quiet inspiration: falls to about 759 mm Hg (−1).</li><li>Quiet expiration: rises to about 761 mm Hg (+1).</li><li>About 500 mL moves per quiet breath.</li></ul>'+
+    '<h4>Stability of alveoli</h4><ul><li>Interdependence: neighbouring alveoli support each other. This matters more than surfactant.</li><li>Negative intrapleural pressure.</li><li>Surfactant.</li></ul>'+
+    '<h4>Surface tension and surfactant</h4><p>A thin fluid layer lines each alveolus. Its molecules cling together, and unopposed this surface tension would collapse the lung. It accounts for more than half of the elastic recoil. Surfactant lowers it.</p>'+
+    '<div class="applied"><b>Applied.</b> Infant respiratory distress syndrome, atelectasis after surgery.</div>'+
+    '<div class="watch">The bright cluster in the right lower lobe is an alveolar group. It swells in inspiration. Pressure is back at 760 at the end of each phase.</div>'},
+ {t:'Transmural pressures',pin:[1.05,0.75,1.3],cam:[0.75,1.3,6.5,[0.5,0.4,0.9]],
+  h:'<h4>Transpulmonary pressure</h4><p>The pressure difference across the lung wall.</p><p class="mono">P<sub>tp</sub> = P<sub>alv</sub> − P<sub>pl</sub> = <span id="liveTp">4.0</span> mm Hg</p><ul><li>Keeps the lungs inflated and prevents collapse.</li><li>It is the distending pressure for inflation.</li><li>Always positive.</li></ul>'+
+    '<h4>Trans-airway pressure</h4><p>The pressure difference across the airway wall. It keeps the airway open.</p>'+
+    '<div class="applied"><b>Applied.</b> Restrictive disorders (pleural, pulmonary or chest wall causes): unable to expand the lungs. Obstructive disorders such as COPD: unable to collapse the lungs, with loss of positive alveolar pressure.</div>'+
+    '<div class="watch">The value above is live. It rises from 4 to 6 mm Hg in quiet inspiration and never reaches zero.</div>'},
+ {t:"Boyle's law",pin:[0.72,-0.1,1.6],cam:[0.2,1.4,7.3,[0,0,0.85]],
+  h:'<p>At constant temperature, the pressure of a fixed quantity of gas falls when the volume of its container rises, and the reverse.</p><p class="mono">P₁V₁ = P₂V₂ &nbsp; (PV = k)</p><ul><li>Decrease volume: molecules are forced closer, pressure rises.</li><li>Increase volume: pressure falls.</li></ul>'+
+    '<div class="boyle"><label for="bv">Volume of container: <b class="mono" id="bvV">2</b></label><input id="bv" type="range" min="1" max="10" step="1" value="2"><div class="bar"><b id="bvBar"></b></div>Pressure = 1/V = <b class="mono" id="bvP">0.50</b><div class="bar p"><b id="bpBar"></b></div><span style="color:var(--muted);font-size:12px">Deck example: V = 2 gives P = 0.5, V = 10 gives P = 0.1.</span></div>'+
+    '<h4>In the thorax</h4><p>Thorax expands, alveolar volume rises, intrapulmonary pressure drops below atmospheric and air flows in. In expiration the volume falls, pressure exceeds atmospheric and air flows out.</p>'+
+    '<div class="watch">Scrub the cycle slowly and compare the volume and intrapulmonary traces. Pressure differs from 760 only while volume is changing.</div>'},
+ {t:'Elastic recoil and compliance',pin:[-0.6,1.2,1.2],cam:[-0.3,1.3,7.8,[0,0.3,0.85]],
+  h:'<h4>Elasticity of the lungs</h4><p>Elastic recoil depends on elastic fibres and surfactant. Fibres stretch in inspiration and recoil when it ends, which produces expiration.</p>'+
+    '<h4>Compliance</h4><p>The expansion of the lungs for each unit rise in transpulmonary pressure.</p><p class="mono">C = ΔV / ΔP &nbsp; normal 150 to 200 mL/cm H₂O</p><ul><li>Static compliance is measured with no flow, at the end of inspiratory or expiratory effort.</li><li>Dynamic compliance is the slope joining the end-inspiratory and end-expiratory points during breathing. It matters in exercise.</li><li>Hysteresis is the difference between the inflation and deflation curves.</li><li>Elastance is the reciprocal. Stiff lungs have high elastance and low compliance.</li></ul>'+
+    '<h4>Chest wall</h4><p>The chest wall recoils outward and the lungs recoil inward. At FRC the two balance.</p>'+
+    '<div class="applied"><b>Applied.</b> Emphysema: elastic fibres degenerate, recoil is lost and the lungs stay inflated. Fibrosis lowers compliance.</div>'+
+    '<div class="watch">The start of each cycle is FRC, the balance point. Quiet expiration returns there with no muscle chip lit, on recoil alone.</div>'}
+];
+var SEQ_I=['Diaphragm and inspiratory intercostals contract','Thorax expands','Intrapleural pressure becomes more subatmospheric','Transpulmonary pressure increases','Lungs expand','Alveolar pressure becomes subatmospheric','Air flows into the alveoli'];
+var SEQ_E=['Diaphragm and inspiratory intercostals stop contracting','Chest wall recoils inward','Intrapleural pressure returns towards its pre-inspiration value','Transpulmonary pressure returns to its pre-inspiration value','Lungs recoil','Alveolar pressure becomes greater than atmospheric','Air flows out of the alveoli'];
+var QUIZ=[
+ {q:'When is airflow into the alveoli greatest?',o:['At the beginning of inspiration','At the middle of inspiration','At the end of inspiration','Equal throughout inspiration'],a:1,why:'Flow follows the pressure gradient. Intrapulmonary pressure is furthest below atmospheric in mid-inspiration. See the flow trace peak.'},
+ {q:'What is the intrapulmonary pressure at the end of a forceful inspiration?',o:['−1 mm Hg compared with atmospheric','Equal to atmospheric pressure','+1 mm Hg compared with atmospheric','−5 mm Hg compared with atmospheric'],a:1,why:'At the end of inspiration flow has stopped, so alveolar pressure has equalised with the atmosphere, however deep the breath.'},
+ {q:'A patient with pleural effusion has:',o:['Decreased ability to develop positive alveolar pressure','Decreased ability to develop negative alveolar pressure','Increased lung volume','Increased pulmonary ventilation'],a:1,why:'Fluid in the pleural space limits lung expansion, so the fall in alveolar pressure during inspiration is blunted.'}
+];
+
+/* ---------- Static UI ---------- */
+var stEl=$('stations');
+ST.forEach(function(s,i){
+  var li=document.createElement('li'),b=document.createElement('button');
+  b.type='button';b.innerHTML='<span class="num">'+(i===0?'◎':i)+'</span><span>'+s.t+'</span>';
+  b.addEventListener('click',function(){go(i)});li.appendChild(b);stEl.appendChild(li);
+});
+function fillSeq(el,arr){arr.forEach(function(t){var li=document.createElement('li');li.textContent=t;el.appendChild(li)})}
+fillSeq($('seqI'),SEQ_I);fillSeq($('seqE'),SEQ_E);
+(function(){
+  var p=$('paneT');p.innerHTML='<h3>Self-check</h3><p>Three questions from the lecture. Pick an answer to see the key.</p>';
+  QUIZ.forEach(function(q,qi){
+    var d=document.createElement('div');d.className='q';
+    var h='<p>'+(qi+1)+'. '+q.q+'</p>';
+    q.o.forEach(function(o,oi){h+='<button type="button" data-i="'+oi+'">'+'ABCD'[oi]+') '+o+'</button>'});
+    h+='<div class="why">Answer: '+'ABCD'[q.a]+'. '+q.why+'</div>';d.innerHTML=h;
+    d.addEventListener('click',function(ev){
+      var b=ev.target.closest('button');if(!b)return;
+      d.classList.add('answered');
+      d.querySelectorAll('button').forEach(function(x){x.classList.remove('wrong');if(+x.dataset.i===q.a)x.classList.add('right')});
+      if(+b.dataset.i!==q.a)b.classList.add('wrong');
+    });
+    p.appendChild(d);
+  });
+})();
+var tabs=[['tabS','paneS'],['tabQ','paneQ'],['tabT','paneT']];
+tabs.forEach(function(t){$(t[0]).addEventListener('click',function(){
+  tabs.forEach(function(u){$(u[0]).setAttribute('aria-selected',u===t);$(u[1]).hidden=u!==t});
+})});
+function renderStation(){
+  var s=ST[S.station],i=S.station;
+  $('paneS').innerHTML='<h3>'+(i?i+'. ':'')+s.t+'</h3>'+s.h+
+    '<div class="navrow"><button class="btn" type="button" id="prevS">← Previous</button><button class="btn" type="button" id="nextS">Next →</button></div>';
+  $('prevS').onclick=function(){go((i+ST.length-1)%ST.length)};
+  $('nextS').onclick=function(){go((i+1)%ST.length)};
+  $('paneS').scrollTop=0;
+  var bv=$('bv');
+  if(bv){var f=function(){var v=+bv.value;$('bvV').textContent=v;$('bvP').textContent=(1/v).toFixed(2);$('bvBar').style.width=(v*10)+'%';$('bpBar').style.width=(100/v)+'%'};bv.addEventListener('input',f);f()}
+  stEl.querySelectorAll('button').forEach(function(b,k){if(k===i)b.setAttribute('aria-current','true');else b.removeAttribute('aria-current')});
+  document.querySelectorAll('.pin').forEach(function(p){p.classList.toggle('on',+p.dataset.i===i)});
+}
+var camGoal=null;
+function go(i){
+  S.station=i;renderStation();
+  var c=ST[i].cam;camGoal={th:c[0],ph:c[1],r:c[2],t:c[3]};
+  $('tabS').click();
+}
+
+/* ---------- Controls ---------- */
+var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if(reduce){S.playing=false;S.phase=0.2}
+function setPlay(v){S.playing=v;$('play').textContent=v?'Pause':'Play'}
+setPlay(S.playing);
+$('play').addEventListener('click',function(){setPlay(!S.playing)});
+function setMode(m){S.mode=m;$('mQuiet').setAttribute('aria-pressed',m==='quiet');$('mForced').setAttribute('aria-pressed',m==='forced');traceDirty=true}
+$('mQuiet').addEventListener('click',function(){setMode('quiet')});
+$('mForced').addEventListener('click',function(){setMode('forced')});
+$('speed').addEventListener('input',function(e){S.speed=+e.target.value});
+$('scrub').addEventListener('input',function(e){S.phase=Math.min(0.999,e.target.value/1000);setPlay(false)});
+$('reset').addEventListener('click',function(){go(0)});
+
+/* ---------- HUD ---------- */
+var CHIPS=['Diaphragm','External intercostals','Neck accessory muscles','Abdominals and internal intercostals'];
+var chipEls=CHIPS.map(function(c){var s=document.createElement('span');s.className='chip';s.textContent=c;$('chips').appendChild(s);return s});
+function hud(m){
+  var ph=$('phase');ph.className='phase'+(m.insp?'':' exp');
+  ph.lastChild.textContent=(S.mode==='quiet'?'Quiet ':'Forced ')+(m.insp?'inspiration':'expiration');
+  $('rPalv').textContent=m.Palv.toFixed(1);$('rPip').textContent=m.Pip.toFixed(1);
+  $('rPtp').textContent='+'+m.Ptp.toFixed(1);$('rVol').textContent=Math.round(m.vol);
+  var forced=S.mode==='forced';
+  var on=[m.insp,m.insp,forced&&m.insp,forced&&!m.insp];
+  chipEls.forEach(function(c,i){c.classList.toggle('on',!!on[i])});
+  var ft=$('flowtag'),a=Math.abs(m.s);
+  ft.textContent=a<0.06?'No airflow: P alv = P atm':(m.insp?'↓ Air flows in':'↑ Air flows out');
+  ft.style.color=a<0.06?'var(--muted)':(m.insp?'var(--insp)':'var(--exp)');
+  var tp=$('liveTp');if(tp)tp.textContent=m.Ptp.toFixed(1);
+  function seq(el,active,x){var n=el.children.length,k=Math.min(n-1,Math.floor(x*n));
+    for(var i=0;i<n;i++){el.children[i].className=active?(i<k?'done':(i===k?'now':'')):''}}
+  if(!$('paneQ').hidden){seq($('seqI'),m.insp,m.x);seq($('seqE'),!m.insp,m.x)}
+}
+
+/* ---------- Traces ---------- */
+var tc=$('trace'),tctx=tc.getContext('2d'),traceDirty=true,traceBuf=document.createElement('canvas');
+var ROWS=[
+ {k:'vol',n:'Volume above FRC',u:'mL',c:'#e6edf5',d:0},
+ {k:'flow',n:'Airflow',u:'L/s',c:'#5fd0c5',d:2,zero:0},
+ {k:'Palv',n:'Intrapulmonary',u:'mm Hg',c:'#6fb7ff',d:0,zero:760},
+ {k:'Pip',n:'Intrapleural',u:'mm Hg',c:'#b79cff',d:0}
+];
+function drawTraceStatic(){
+  var dpr=Math.min(2,window.devicePixelRatio||1),w=tc.clientWidth,h=tc.clientHeight;
+  if(!w||!h)return;
+  tc.width=traceBuf.width=w*dpr;tc.height=traceBuf.height=h*dpr;
+  var g=traceBuf.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  var L=118,R=52,pw=w-L-R,rh=h/ROWS.length,N=160,m0=model(0,S.mode);
+  g.fillStyle='rgba(111,183,255,.07)';g.fillRect(L,0,pw*m0.fi,h);
+  g.fillStyle='rgba(255,176,103,.06)';g.fillRect(L+pw*m0.fi,0,pw*(1-m0.fi),h);
+  g.font='11px "IBM Plex Sans",sans-serif';g.textBaseline='middle';
+  ROWS.forEach(function(r,ri){
+    var vals=[],mn=1e9,mx=-1e9,i;
+    for(i=0;i<=N;i++){var v=model(Math.min(0.9999,i/N),S.mode)[r.k];vals.push(v);if(v<mn)mn=v;if(v>mx)mx=v}
+    var top=ri*rh+7,bot=(ri+1)*rh-7,y=function(v){return bot-(v-mn)/(mx-mn||1)*(bot-top)};
+    g.strokeStyle='#2a3e55';g.lineWidth=1;g.beginPath();g.moveTo(L,(ri+1)*rh-.5);g.lineTo(w-R,(ri+1)*rh-.5);g.stroke();
+    if(r.zero!==undefined){g.setLineDash([3,3]);g.beginPath();g.moveTo(L,y(r.zero));g.lineTo(w-R,y(r.zero));g.stroke();g.setLineDash([])}
+    g.strokeStyle=r.c;g.lineWidth=1.8;g.beginPath();
+    for(i=0;i<=N;i++){var X=L+pw*i/N;if(i)g.lineTo(X,y(vals[i]));else g.moveTo(X,y(vals[i]))}
+    g.stroke();
+    g.fillStyle=r.c;g.textAlign='left';g.fillText(r.n,6,(top+bot)/2-6);
+    g.fillStyle='#93a6ba';g.fillText(r.u,6,(top+bot)/2+7);
+    g.fillText(mx.toFixed(r.d),w-R+5,top+3);g.fillText(mn.toFixed(r.d),w-R+5,bot-3);
+    r._y=y;r._v=vals;
+  });
+  g.fillStyle='#93a6ba';g.textAlign='center';
+  traceBuf._geo={L:L,pw:pw,w:w,h:h,dpr:dpr};traceDirty=false;
+}
+function drawTrace(p,m){
+  if(traceDirty)drawTraceStatic();
+  var G=traceBuf._geo;if(!G)return;
+  tctx.setTransform(1,0,0,1,0,0);tctx.clearRect(0,0,tc.width,tc.height);tctx.drawImage(traceBuf,0,0);
+  tctx.setTransform(G.dpr,0,0,G.dpr,0,0);
+  var X=G.L+G.pw*p;tctx.strokeStyle=m.insp?'#6fb7ff':'#ffb067';tctx.lineWidth=1.5;
+  tctx.beginPath();tctx.moveTo(X,0);tctx.lineTo(X,G.h);tctx.stroke();
+  ROWS.forEach(function(r){tctx.fillStyle=r.c;tctx.beginPath();tctx.arc(X,r._y(m[r.k]),3.5,0,7);tctx.fill()});
+}
+
+/* ---------- 3D scene ---------- */
+var stage=$('stage'),canvas=$('gl');
+if(!window.THREE){stage.insertAdjacentHTML('beforeend','<div class="err">The 3D library did not load. Check your connection and reload the page.</div>');renderStation();return}
+var renderer;
+try{renderer=new THREE.WebGLRenderer({canvas:canvas,antialias:true,alpha:true})}
+catch(e){stage.insertAdjacentHTML('beforeend','<div class="err">This browser could not start WebGL, so the 3D model cannot be shown. The stations, traces and self-check still work.</div>')}
+var scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(38,1,0.1,100);
+scene.add(new THREE.HemisphereLight(0xdfeaff,0x1a2330,0.95));
+var dl=new THREE.DirectionalLight(0xffffff,0.75);dl.position.set(3,5,6);scene.add(dl);
+var dl2=new THREE.DirectionalLight(0x88aaff,0.3);dl2.position.set(-4,2,-3);scene.add(dl2);
+var root=new THREE.Group();scene.add(root);root.position.y=-0.1;
+var V=function(x,y,z){return new THREE.Vector3(x,y,z)},UP=V(0,1,0);
+function std(color,o){o=o||{};o.color=color;if(o.roughness===undefined)o.roughness=0.6;return new THREE.MeshStandardMaterial(o)}
+function cyl(a,b,r,mat,seg){var d=b.clone().sub(a),len=d.length();
+  var g=new THREE.CylinderGeometry(r,r,len,seg||10,1),m=new THREE.Mesh(g,mat);
+  m.position.copy(a).addScaledVector(d,0.5);m.quaternion.setFromUnitVectors(UP,d.normalize());return m}
+
+/* spine */
+var gBone=new THREE.Group();root.add(gBone);
+var boneM=std(0xe8e0cc,{roughness:0.75});
+for(var k=0;k<13;k++){var vb=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,0.24,14),boneM);vb.position.set(0,1.95-k*0.29,-0.08);gBone.add(vb)}
+
+/* ribs: pivot at the vertebral end, slope down towards the front */
+var ALPHA=0.38,ribs=[],ribM=std(0xe8e0cc,{roughness:0.7,emissive:0x3a6ea8,emissiveIntensity:0});
+function ribPts(a,b,t0,t1,n){var pts=[];for(var i=0;i<=n;i++){var t=t0+(t1-t0)*i/n;pts.push(V(a*Math.sin(t),0,b*(1-Math.cos(t))))}return pts}
+for(var i=0;i<10;i++){
+  var f=Math.min(1,i/5),sm=f*f*(3-2*f),a=0.9+0.65*sm,b=0.58+0.37*sm,y=1.7-i*0.28;
+  var g=new THREE.Group();g.position.set(0,y,0);
+  var arcs=i<7?[[0.14,2*Math.PI-0.14]]:[[0.14,Math.PI-0.25*(i-6)-0.12],[Math.PI+0.25*(i-6)+0.12,2*Math.PI-0.14]];
+  arcs.forEach(function(ar){
+    var crv=new THREE.CatmullRomCurve3(ribPts(a,b,ar[0],ar[1],40));
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(crv,60,0.042,8,false),ribM));
+  });
+  gBone.add(g);ribs.push({g:g,b:b,y:y});
+}
+var sternum=new THREE.Mesh(new THREE.BoxGeometry(0.3,1,0.09),boneM);gBone.add(sternum);
+function poseRibs(e){
+  var al=ALPHA-0.085*e;
+  ribs.forEach(function(r){r.g.rotation.x=al;r.g.scale.x=1+0.035*e});
+  var s=Math.sin(al),c=Math.cos(al),r0=ribs[0],r6=ribs[6];
+  var top=V(0,r0.y-2*r0.b*s+0.12,2*r0.b*c),bot=V(0,r6.y-2*r6.b*s-0.25,2*r6.b*c);
+  var d=bot.clone().sub(top),len=d.length();
+  sternum.position.copy(top).addScaledVector(d,0.5);sternum.scale.y=len;
+  sternum.quaternion.setFromUnitVectors(UP,d.normalize().negate());
+  return top;
+}
+
+/* lungs + pleura */
+var LR={x:0.72,y0:0.15,z:0.8,rx:0.6,ry:1.3,rz:0.68};
+function lungGeo(side){
+  var g=new THREE.SphereGeometry(1,40,32),p=g.attributes.position;
+  for(var i=0;i<p.count;i++){
+    var x=p.getX(i),y=p.getY(i),z=p.getZ(i);
+    var t=Math.max(0,Math.min(1,(y+0.2)/1.2)),tp=1-0.38*t*t*(3-2*t);x*=tp;z*=tp;
+    if(y<-0.55){var hr=Math.min(1,Math.sqrt(x*x+z*z)/0.83);y=-0.55+(-0.55-y)*0.55-0.12*hr*hr}
+    if(x*side<0)x*=0.62; /* flatter mediastinal face */
+    p.setXYZ(i,x*LR.rx,y*LR.ry,z*LR.rz);
+  }
+  g.computeVertexNormals();return g;
+}
+var lungM=std(0xe98fa3,{transparent:true,opacity:0.5,depthWrite:false,roughness:0.45});
+var pleuraM=std(0xb79cff,{transparent:true,opacity:0.17,depthWrite:false,side:THREE.DoubleSide,roughness:0.3});
+var treeM=std(0xdfe8f5,{roughness:0.5});
+var lungs=[],gLungs=new THREE.Group(),gPleura=new THREE.Group();root.add(gLungs);root.add(gPleura);
+function inLung(p){var x=p.x/LR.rx,y=p.y/LR.ry,z=p.z/LR.rz;return Math.sqrt(x*x+y*y+z*z)}
+function branch(parent,p,dir,len,r,depth,idx){
+  var end=p.clone().addScaledVector(dir,len);
+  if(inLung(end)>0.72||end.y<-0.5*LR.ry){dir=dir.clone().lerp(V(0,0.05,0).sub(p).normalize(),0.6).normalize();end=p.clone().addScaledVector(dir,len*0.8)}
+  parent.add(cyl(p,end,r,treeM,7));
+  if(depth<=0)return;
+  var perp=V(-dir.y,dir.x,0.3).cross(dir).normalize();
+  perp.applyAxisAngle(dir,idx*2.4+depth*1.1);
+  [-1,1].forEach(function(sg,j){
+    var d2=dir.clone().applyAxisAngle(perp,sg*(0.5+0.12*((idx+depth)%3))).normalize();
+    branch(parent,end,d2,len*0.74,r*0.74,depth-1,idx*2+j+1);
+  });
+}
+[1,-1].forEach(function(side){
+  var g=new THREE.Group();g.position.set(side*LR.x,LR.y0,LR.z);
+  var mesh=new THREE.Mesh(lungGeo(side),lungM);mesh.renderOrder=2;g.add(mesh);
+  var hil=V(-side*0.3,0.3,0.0);
+  branch(g,hil,V(side*0.72,-0.66,0.1).normalize(),0.3,0.05,4,side>0?1:2);
+  branch(g,hil,V(side*0.45,0.85,-0.05).normalize(),0.26,0.04,3,side>0?3:5);
+  gLungs.add(g);
+  var pl=new THREE.Mesh(lungGeo(side),pleuraM);pl.renderOrder=3;pl.position.copy(g.position);gPleura.add(pl);
+  lungs.push({g:g,pl:pl,side:side,hil:hil.clone().add(g.position)});
+});
+/* alveolar cluster in the right lower lobe (viewer's left) */
+var alv=new THREE.Group(),alvM=std(0xfff0b8,{emissive:0xffc860,emissiveIntensity:0.5,roughness:0.3});
+[[0,0,0],[.07,.03,.02],[-.06,.04,.03],[.02,-.07,.03],[.03,.06,-.05],[-.04,-.04,-.05],[.08,-.04,-.03],[-.08,-.02,0],[0,.08,.04]].forEach(function(o){
+  var s=new THREE.Mesh(new THREE.SphereGeometry(0.05,12,10),alvM);s.position.set(o[0],o[1],o[2]);alv.add(s)});
+alv.position.set(-0.34,-0.4,0.38);lungs[1].g.add(alv);
+
+/* airway: trachea + main bronchi */
+var gAir=new THREE.Group();root.add(gAir);
+var TR_TOP=V(0,2.55,0.72),CAR=V(0,0.95,0.8);
+var airM=std(0xdfe8f5,{transparent:true,opacity:0.55,roughness:0.4,depthWrite:false});
+gAir.add(cyl(TR_TOP,CAR,0.115,airM,16));
+for(var q=0;q<11;q++){var tr=new THREE.Mesh(new THREE.TorusGeometry(0.12,0.018,6,20),treeM);tr.rotation.x=Math.PI/2;tr.position.copy(TR_TOP).lerp(CAR,(q+0.5)/11.5);gAir.add(tr)}
+lungs.forEach(function(L){gAir.add(cyl(CAR,L.hil,0.075,treeM,10))});
+
+/* diaphragm */
+var diaM=std(0xb2452f,{side:THREE.DoubleSide,emissive:0xff5a30,emissiveIntensity:0,roughness:0.55,transparent:true,opacity:0.92});
+var dia=new THREE.Mesh(new THREE.SphereGeometry(1,40,18,0,Math.PI*2,0,Math.PI/2),diaM);root.add(dia);
+
+/* accessory muscles */
+var gMus=new THREE.Group();root.add(gMus);
+var neckM=std(0x8e3b34,{emissive:0xff4a2a,emissiveIntensity:0,roughness:0.6});
+var abM=std(0x8e3b34,{emissive:0xff4a2a,emissiveIntensity:0,roughness:0.6,transparent:true,opacity:0.5,side:THREE.DoubleSide,depthWrite:false});
+var neck=[];
+[1,-1].forEach(function(s){
+  var a=cyl(V(s*0.14,1.42,1.0),V(s*0.5,2.6,0.3),0.06,neckM,8);a.scale.z=0.55;gMus.add(a);neck.push(a);
+  var b2=cyl(V(s*0.7,1.62,0.5),V(s*0.2,2.55,0.18),0.05,neckM,8);gMus.add(b2);neck.push(b2);
+  var c2=cyl(V(s*0.55,1.68,0.2),V(s*0.16,2.5,0.05),0.045,neckM,8);gMus.add(c2);neck.push(c2);
+});
+var abd=new THREE.Mesh(new THREE.CylinderGeometry(1.42,1.2,1.35,32,1,true,-Math.PI*0.42,Math.PI*0.84),abM);
+abd.position.set(0,-1.95,0.8);abd.scale.z=0.8;abd.renderOrder=4;gMus.add(abd);
+
+/* airflow particles */
+var NP=90,pPos=new Float32Array(NP*3),pData=[];
+var PATHS=lungs.map(function(L){return [V(0,2.8,0.72),TR_TOP,CAR,L.hil,V(L.side*0.9,-0.15,0.85)]});
+PATHS.forEach(function(p){var segs=[],tot=0;for(var i=1;i<p.length;i++){var l=p[i].distanceTo(p[i-1]);segs.push(l);tot+=l}p.segs=segs;p.tot=tot});
+for(var n=0;n<NP;n++)pData.push({path:n%2,t:Math.random(),ox:(Math.random()-.5)*0.11,oz:(Math.random()-.5)*0.11});
+var pGeo=new THREE.BufferGeometry();pGeo.setAttribute('position',new THREE.BufferAttribute(pPos,3));
+var pMat=new THREE.PointsMaterial({color:0x6fb7ff,size:0.075,transparent:true,opacity:0.9,depthWrite:false,depthTest:false});
+var pts=new THREE.Points(pGeo,pMat);pts.renderOrder=10;root.add(pts);
+var tmp=V(0,0,0);
+function pathAt(p,t,out){var d=t*p.tot;for(var i=0;i<p.segs.length;i++){if(d<=p.segs[i]||i===p.segs.length-1){return out.copy(p[i]).lerp(p[i+1],Math.min(1,d/p.segs[i]))}d-=p.segs[i]}return out}
+function stepParticles(m,dt){
+  var sp=m.s*(S.mode==='forced'?1.1:0.55)*dt;
+  for(var i=0;i<NP;i++){var d=pData[i];d.t+=sp;if(d.t>1)d.t-=1;if(d.t<0)d.t+=1;
+    pathAt(PATHS[d.path],d.t,tmp);var fade=d.t>0.8?1.6:1;
+    pPos[i*3]=tmp.x+d.ox*fade;pPos[i*3+1]=tmp.y;pPos[i*3+2]=tmp.z+d.oz*fade}
+  pGeo.attributes.position.needsUpdate=true;
+  pMat.opacity=Math.min(0.95,Math.abs(m.s)*1.4);pMat.color.setHex(m.insp?0x6fb7ff:0xffb067);
+}
+
+/* pose everything for breath amount e (1 = quiet tidal breath) */
+function pose(m){
+  var e=m.e,forced=S.mode==='forced';
+  poseRibs(e);
+  lungs.forEach(function(L){
+    var sy=1+0.055*e,sx=1+0.05*e,sz=1+0.06*e;
+    L.g.scale.set(sx,sy,sz);L.g.position.y=LR.y0+LR.ry*(1-sy);L.g.position.x=L.side*(LR.x+0.012*e);
+    L.pl.scale.set(sx*1.09,sy*1.045,sz*1.09);L.pl.position.copy(L.g.position);L.pl.position.y+=0.01;
+  });
+  var as=1+0.22*m.vf*(forced?1.6:1);alv.scale.set(as,as,as);
+  dia.scale.set(1.5+0.03*e,0.6-0.11*e,0.95+0.03*e);dia.position.set(0,-1.15-0.05*e,0.88);
+  diaM.emissiveIntensity=m.insp?0.1+0.3*Math.abs(m.s):0;
+  ribM.emissiveIntensity=m.insp?0.35*Math.abs(m.s):0;
+  neckM.emissiveIntensity=forced&&m.insp?0.3+0.6*Math.abs(m.s):0;
+  var ab=forced&&!m.insp?Math.abs(m.s):0;abM.emissiveIntensity=ab*0.9;abM.opacity=0.35+0.4*ab;
+  abd.scale.z=0.8-0.1*ab+0.03*e;
+}
+
+/* layers */
+function bindLayer(id,obj){$(id).addEventListener('change',function(e){obj.visible=e.target.checked})}
+bindLayer('lyRibs',gBone);bindLayer('lyLungs',gLungs);bindLayer('lyPleura',gPleura);bindLayer('lyMus',gMus);
+$('lyPins').addEventListener('change',function(e){$('pins').style.display=e.target.checked?'':'none'});
+
+/* pins */
+var pinEls=[];
+ST.forEach(function(s,i){
+  if(!s.pin)return;
+  var b=document.createElement('button');b.type='button';b.className='pin';b.dataset.i=i;b.setAttribute('aria-label','Station '+i+': '+s.t);
+  b.innerHTML='<span class="num">'+i+'</span><span class="lbl">'+s.t+'</span>';
+  b.addEventListener('click',function(){go(i)});$('pins').appendChild(b);
+  pinEls.push({el:b,p:V(s.pin[0],s.pin[1],s.pin[2])});
+});
+var pv=V(0,0,0);
+function placePins(w,h){
+  pinEls.forEach(function(P){
+    pv.copy(P.p);root.localToWorld(pv);pv.project(camera);
+    var vis=pv.z<1&&Math.abs(pv.x)<1.05&&Math.abs(pv.y)<1.05;
+    P.el.style.display=vis?'':'none';
+    if(vis){P.el.style.left=((pv.x+1)/2*w)+'px';P.el.style.top=((1-pv.y)/2*h)+'px'}
+  });
+}
+
+/* orbit camera */
+var cam={th:0.5,ph:1.4,r:10.4,t:V(0,0.1,0.85)};
+function applyCam(){
+  cam.ph=Math.max(0.25,Math.min(2.7,cam.ph));cam.r=Math.max(2.6,Math.min(20,cam.r));
+  camera.position.set(cam.t.x+cam.r*Math.sin(cam.ph)*Math.sin(cam.th),cam.t.y+cam.r*Math.cos(cam.ph),cam.t.z+cam.r*Math.sin(cam.ph)*Math.cos(cam.th));
+  camera.lookAt(cam.t);
+}
+var ptrs={},pinch=0;
+canvas.addEventListener('pointerdown',function(e){ptrs[e.pointerId]={x:e.clientX,y:e.clientY};try{canvas.setPointerCapture(e.pointerId)}catch(x){}camGoal=null});
+canvas.addEventListener('pointermove',function(e){
+  var p=ptrs[e.pointerId];if(!p)return;
+  var ids=Object.keys(ptrs);
+  if(ids.length===1){cam.th-=(e.clientX-p.x)*0.008;cam.ph-=(e.clientY-p.y)*0.008}
+  p.x=e.clientX;p.y=e.clientY;
+  if(ids.length===2){var a=ptrs[ids[0]],b=ptrs[ids[1]],d=Math.hypot(a.x-b.x,a.y-b.y);if(pinch)cam.r*=pinch/d;pinch=d}
+});
+function up(e){delete ptrs[e.pointerId];pinch=0}
+canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
+canvas.addEventListener('wheel',function(e){e.preventDefault();cam.r*=Math.exp(e.deltaY*0.0012);camGoal=null},{passive:false});
+
+/* sizing */
+var W=0,H=0;
+function resize(){
+  W=stage.clientWidth;H=stage.clientHeight;if(!W||!H)return;
+  if(renderer){renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));renderer.setSize(W,H,false)}
+  camera.aspect=W/H;camera.fov=W/H<0.8?52:38;if(W>760)camera.setViewOffset(W,H,-W*0.1,0,W,H);else camera.clearViewOffset();camera.updateProjectionMatrix();traceDirty=true;
+}
+if(window.ResizeObserver)new ResizeObserver(resize).observe(stage);
+window.addEventListener('resize',resize);resize();
+
+/* loop */
+var last=performance.now();
+function frame(now){
+  var dt=Math.min(0.05,(now-last)/1000);last=now;
+  var T=MODES[S.mode].Ti+MODES[S.mode].Te;
+  if(S.playing){S.phase=(S.phase+dt*S.speed/T)%1;$('scrub').value=Math.round(S.phase*1000)}
+  var m=model(S.phase,S.mode);
+  if(camGoal){var kx=1-Math.pow(0.002,dt);
+    cam.th+=(camGoal.th-cam.th)*kx;cam.ph+=(camGoal.ph-cam.ph)*kx;cam.r+=(camGoal.r-cam.r)*kx;
+    cam.t.x+=(camGoal.t[0]-cam.t.x)*kx;cam.t.y+=(camGoal.t[1]-cam.t.y)*kx;cam.t.z+=(camGoal.t[2]-cam.t.z)*kx;
+    if(Math.abs(camGoal.th-cam.th)+Math.abs(camGoal.ph-cam.ph)+Math.abs(camGoal.r-cam.r)<0.003)camGoal=null}
+  applyCam();pose(m);stepParticles(m,S.playing?dt*S.speed:0);
+  if(renderer)renderer.render(scene,camera);
+  camera.updateMatrixWorld();placePins(W,H);hud(m);drawTrace(S.phase,m);
+  requestAnimationFrame(frame);
+}
+renderStation();
+requestAnimationFrame(frame);
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(function(){traceDirty=true});
+})();
+</script>
+</body>
+</html>
